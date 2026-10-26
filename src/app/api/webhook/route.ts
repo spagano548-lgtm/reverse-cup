@@ -1,29 +1,23 @@
+import { NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
 
 export async function POST(req: Request) {
     try {
-        // 1. Twilio invia i dati del messaggio in formato form-urlencoded
-        const text = await req.text();
-        const params = new URLSearchParams(text);
-        
-        const fromNumber = params.get('From'); // Es. +393331234567
-        const body = params.get('Body')?.trim().toUpperCase(); // Estraiamo "SI" o "NO"
+        // Riceviamo telefono e risposta dal nostro Simulatore Web
+        const { telefono, risposta } = await req.json();
 
-        if (!fromNumber || !body) {
-            return new Response('Parametri mancanti', { status: 400 });
+        if (!telefono || !risposta) {
+            return NextResponse.json({ message: "Dati mancanti" }, { status: 400 });
         }
 
-        // 2. Troviamo il paziente usando il suo numero di telefono
-        const pazienteQuery = await sql`
-            SELECT id FROM pazienti WHERE telefono = ${fromNumber} LIMIT 1
-        `;
-        
+        // 1. Troviamo il paziente
+        const pazienteQuery = await sql`SELECT id FROM pazienti WHERE telefono = ${telefono} LIMIT 1`;
         if (pazienteQuery.length === 0) {
-            return inviaRispostaTwiML("Paziente non trovato nel sistema.");
+            return NextResponse.json({ message: "Paziente non trovato nel sistema." });
         }
         const idPaziente = pazienteQuery[0].id;
 
-        // 3. Cerchiamo lo slot 'in_attesa_conferma' e la rispettiva ricetta 'in_attesa'
+        // 2. Cerchiamo il suo appuntamento in attesa
         const matchQuery = await sql`
             SELECT a.id as id_slot, r.id as id_ricetta
             FROM agende a
@@ -35,52 +29,29 @@ export async function POST(req: Request) {
         `;
 
         if (matchQuery.length === 0) {
-            return inviaRispostaTwiML("Nessun appuntamento in attesa di conferma trovato.");
+            return NextResponse.json({ message: "Nessun appuntamento in attesa di conferma." });
         }
-
         const match = matchQuery[0];
-        let messaggioRisposta = "";
 
-        // 4. Logica di Routing (Yield Management)
-        if (body === 'SI') {
-            // Caso Accettazione: Fissiamo l'appuntamento ed evadiamo la ricetta
+        // 3. Logica di Routing (Yield Management)
+        if (risposta === 'SI') {
             await sql`UPDATE agende SET stato_slot = 'occupato' WHERE id = ${match.id_slot}`;
             await sql`UPDATE ricette SET stato = 'evasa' WHERE id = ${match.id_ricetta}`;
-            messaggioRisposta = "Appuntamento confermato con successo. Grazie!";
+            return NextResponse.json({ message: "Appuntamento confermato con successo!" });
             
-        } else if (body === 'NO') {
-            // Caso Rifiuto: Liberiamo lo slot e rimettiamo in circolo la risorsa
+        } else if (risposta === 'NO') {
             await sql`UPDATE agende SET stato_slot = 'libero' WHERE id = ${match.id_slot}`;
-            messaggioRisposta = "Hai ceduto il turno. Rimarrai in lista per le prossime disponibilità.";
             
-            // Inneschiamo di nuovo l'API di match per chiamare SUBITO il prossimo in lista
+            // Re-inneschiamo il match per il prossimo in lista
             const host = req.headers.get('host');
             const protocol = process.env.NODE_ENV === 'development' ? 'http' : 'https';
-            fetch(`${protocol}://${host}/api/match`).catch(err => console.error("Errore re-innesco match:", err));
+            fetch(`${protocol}://${host}/api/match`).catch(e => console.error(e));
             
-        } else {
-            // Caso Errore di battitura
-            messaggioRisposta = "Rispondi solo SI per confermare o NO per rifiutare.";
+            return NextResponse.json({ message: "Hai ceduto il turno. Rimarrai in lista." });
         }
 
-        // 5. Restituiamo la risposta a Twilio
-        return inviaRispostaTwiML(messaggioRisposta);
-
     } catch (error) {
-        console.error("Errore nel Webhook Twilio:", error);
-        return new Response('Errore interno al server', { status: 500 });
+        console.error("Errore nel Webhook:", error);
+        return NextResponse.json({ message: "Errore interno al server" }, { status: 500 });
     }
-}
-
-// Helper per generare la risposta XML (TwiML) richiesta da Twilio
-function inviaRispostaTwiML(messaggio: string) {
-    const twiml = `<?xml version="1.0" encoding="UTF-8"?>
-<Response>
-    <Message>${messaggio}</Message>
-</Response>`;
-
-    return new Response(twiml, {
-        status: 200,
-        headers: { 'Content-Type': 'text/xml' },
-    });
 }

@@ -1,8 +1,5 @@
 import { NextResponse } from 'next/server';
 import { sql } from '@/lib/db';
-import { sendSMS } from '@/lib/twilio';
-// Importiamo la funzione per l'SMS (la creeremo nel prossimo step)
-// import { sendSMS } from '@/lib/twilio';
 
 export async function GET() {
     try {
@@ -21,7 +18,6 @@ export async function GET() {
         const slot = slotQuery[0];
 
         // 2. Troviamo il paziente con la priorità clinica più alta in attesa
-        // Ordiniamo per priorità (1=U, 2=B, 3=D, 4=P) e poi per data di inserimento (il più vecchio prima)
         const pazienteQuery = await sql`
             SELECT r.id as id_ricetta, p.id as id_paziente, p.nome, p.telefono
             FROM ricette r
@@ -42,23 +38,19 @@ export async function GET() {
             UPDATE agende 
             SET stato_slot = 'in_attesa_conferma' 
             WHERE id = ${slot.id}
-            await sendSMS(match.telefono, testoSMS);
         `;
 
-        // 4. Prepariamo e inviamo l'SMS al paziente
+        // 4. Prepariamo il testo della notifica (per il log e per il simulatore)
         const dataFormat = new Date(slot.data_ora).toLocaleString('it-IT', {
             day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
         });
         
-        const testoSMS = \`SSN Informa: Si è liberato un posto per \${slot.prestazione} il \${dataFormat} al \${slot.ospedale}. Rispondi SI per confermare o NO per cedere il turno.\`;
-        
-        // Scommenteremo questa riga nello Step 4 dopo aver configurato Twilio
-        // await sendSMS(match.telefono, testoSMS);
+        const testoSMS = `SSN Informa: Si è liberato un posto per ${slot.prestazione} il ${dataFormat} al ${slot.ospedale}. Rispondi SI per confermare o NO per cedere il turno.`;
 
         // Risposta per scopi di debug e log manageriale
         return NextResponse.json({ 
             success: true, 
-            message: "Match effettuato con successo. Slot bloccato e notifica in preparazione.",
+            message: "Match effettuato con successo. Slot bloccato.",
             dettagli: {
                 slot_id: slot.id,
                 paziente: match.nome,
