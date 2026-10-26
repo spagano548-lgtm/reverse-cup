@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Reverse-CUP MVP",
-  description: "Yield Management per liste d'attesa SSN",
+  title: "Reverse-CUP | Direzione Sanitaria ASL",
+  description: "Sistema di Yield Management per liste d'attesa SSN",
 };
 
 export default function RootLayout({
@@ -13,7 +13,10 @@ export default function RootLayout({
 }) {
   return (
     <html lang="it">
-      <body className="bg-slate-50 text-slate-900 antialiased">
+      <head>
+        <script src="https://cdn.tailwindcss.com"></script>
+      </head>
+      <body className="bg-slate-50 text-slate-900 antialiased min-h-screen">
         {children}
       </body>
     </html>
