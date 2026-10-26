@@ -7,6 +7,7 @@ export default function Dashboard() {
   const [agende, setAgende] = useState<any[]>([]);
   const [coda, setCoda] = useState<any[]>([]);
   const [statusMsg, setStatusMsg] = useState<string>("");
+  const [matchAudit, setMatchAudit] = useState<any>(null); // Nuovo stato per il Log Crittografico
   const [loading, setLoading] = useState<boolean>(true);
 
   const caricaDati = async (reset = false) => {
@@ -16,7 +17,10 @@ export default function Dashboard() {
       const data = await res.json();
       if (data.agende) setAgende(data.agende);
       if (data.coda) setCoda(data.coda);
-      if (reset) setStatusMsg("Database ripristinato con i dati demo iniziali!");
+      if (reset) {
+          setStatusMsg("Database ripristinato con i dati demo iniziali!");
+          setMatchAudit(null);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -25,14 +29,20 @@ export default function Dashboard() {
   };
 
   const eseguiMatch = async () => {
-    setStatusMsg("Scansione liste d'attesa in corso...");
+    setStatusMsg("Elaborazione Algoritmo DYCUS in corso...");
+    setMatchAudit(null);
     try {
       const res = await fetch("/api/match", { cache: "no-store" });
       const data = await res.json();
+      
       if (data.dettagli) {
-        setStatusMsg(`Match trovato! Paziente: ${data.dettagli.paziente} (Tel: ${data.dettagli.telefono})`);
+        setStatusMsg(`Match Assegnato! Paziente: ${data.dettagli.paziente} (Tel: ${data.dettagli.telefono})`);
+        if (data.dettagli.metriche_govtech) {
+            // Salviamo il certificato crittografico e lo score per mostrarlo in UI
+            setMatchAudit(data.dettagli.metriche_govtech);
+        }
       } else {
-        setStatusMsg(data.message || "Controllo completato.");
+        setStatusMsg(data.message || "Controllo completato. Nessun match possibile.");
       }
       await caricaDati();
     } catch {
@@ -61,8 +71,8 @@ export default function Dashboard() {
             <p className="text-xs text-slate-400 mt-1">Direzione Sanitaria ASL</p>
           </div>
           <nav className="space-y-2">
-            <div className="bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium">
-              Dashboard Yield
+            <div className="bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-md">
+              Dashboard Yield & Audit
             </div>
             <Link
               href="/paziente"
@@ -74,7 +84,7 @@ export default function Dashboard() {
           </nav>
         </div>
         <div className="text-xs text-slate-500 border-t border-slate-800 pt-4">
-          Reverse-CUP MVP v1.0 <br /> Motore Auto-Sync Attivo
+          Motore DYCUS + SHA-256 Attivo
         </div>
       </aside>
 
@@ -83,19 +93,19 @@ export default function Dashboard() {
         <div className="flex flex-wrap items-center justify-between gap-4 mb-8">
           <div>
             <h2 className="text-2xl font-bold text-slate-800">
-              Monitoraggio Rese (Yield Management)
+              Monitoraggio Rese e Assegnazioni
             </h2>
             <p className="text-sm text-slate-500">
-              Panoramica in tempo reale sull&apos;ottimizzazione delle liste d&apos;attesa.
+              Motore Predittivo Black-Box e Registro Crittografico Incorruttibile.
             </p>
           </div>
 
           <div className="flex gap-3">
             <button
               onClick={eseguiMatch}
-              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition cursor-pointer"
+              className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition cursor-pointer flex items-center gap-2"
             >
-              ⚡ Forza Match Ora
+              ⚡ Innesca Algoritmo DYCUS
             </button>
             <button
               onClick={() => caricaDati(true)}
@@ -106,12 +116,45 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Notifica di sistema */}
         {statusMsg && (
-          <div className="mb-6 p-4 bg-blue-50 border border-blue-200 text-blue-900 rounded-xl text-sm font-medium flex justify-between items-center">
+          <div className="mb-4 p-4 bg-blue-50 border border-blue-200 text-blue-900 rounded-xl text-sm font-medium flex justify-between items-center shadow-sm">
             <span>{statusMsg}</span>
-            <button onClick={() => setStatusMsg("")} className="text-xs underline ml-4">
+            <button onClick={() => setStatusMsg("")} className="text-xs underline ml-4 hover:text-blue-700">
               Chiudi
             </button>
+          </div>
+        )}
+
+        {/* AUDIT CRITTOGRAFICO (Mostrato solo quando c'è un match) */}
+        {matchAudit && (
+          <div className="mb-8 bg-slate-900 rounded-xl shadow-lg border border-slate-700 overflow-hidden font-mono text-sm">
+            <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
+              <span className="text-emerald-400 font-bold flex items-center gap-2">
+                🔒 LOG ASSEGNAZIONE INCORRUTTIBILE
+              </span>
+              <span className="text-xs text-slate-500">Zero-Trust Architecture</span>
+            </div>
+            <div className="p-5 text-slate-300 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+              <div>
+                <span className="text-slate-500 text-xs block mb-1">CERTIFICATO (HASH SHA-256)</span>
+                <span className="text-amber-400 font-bold tracking-widest break-all">
+                  {matchAudit.certificato_hash_sha256}
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500 text-xs block mb-1">SCORE YIELD (DYCUS)</span>
+                <span className="text-white font-bold text-lg">{matchAudit.dycus_score} pts</span>
+              </div>
+              <div>
+                <span className="text-slate-500 text-xs block mb-1">MOTIVAZIONE CLINICO-PREDITTIVA</span>
+                <span className="text-blue-300">{matchAudit.motivazione_pubblica}</span>
+              </div>
+              <div>
+                <span className="text-slate-500 text-xs block mb-1">PROBABILITÀ CONVERSIONE STIMATA</span>
+                <span className="text-emerald-400">{matchAudit.probabilita_conversione}</span>
+              </div>
+            </div>
           </div>
         )}
 
@@ -132,9 +175,9 @@ export default function Dashboard() {
           </div>
 
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-            <p className="text-xs font-semibold uppercase text-slate-400">Valore Generato</p>
+            <p className="text-xs font-semibold uppercase text-slate-400">Valore Generato (SSN)</p>
             <p className="text-4xl font-bold text-blue-600 mt-2">€ {valoreGenerato}</p>
-            <p className="text-xs text-slate-500 mt-1">Basato su media rimborsi SSN (45€)</p>
+            <p className="text-xs text-slate-500 mt-1">Stima recupero costi</p>
           </div>
         </div>
 
@@ -158,85 +201,26 @@ export default function Dashboard() {
             <tbody className="divide-y divide-slate-200 text-sm">
               {loading ? (
                 <tr>
-                  <td colSpan={4} className="p-6 text-center text-slate-400">
-                    Caricamento dati dal database...
-                  </td>
+                  <td colSpan={4} className="p-6 text-center text-slate-400">Caricamento dati dal database...</td>
                 </tr>
               ) : (
                 agende.map((item) => (
                   <tr key={item.id} className="hover:bg-slate-50">
                     <td className="p-4 font-medium text-slate-800">
                       {new Date(item.data_ora).toLocaleString("it-IT", {
-                        day: "2-digit",
-                        month: "2-digit",
-                        year: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
+                        day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit",
                       })}
                     </td>
                     <td className="p-4">{item.prestazione}</td>
                     <td className="p-4 text-slate-600">{item.ospedale}</td>
                     <td className="p-4">
-                      {item.stato_slot === "libero" && (
-                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">
-                          Libero (Da Assegnare)
-                        </span>
-                      )}
-                      {item.stato_slot === "in_attesa_conferma" && (
-                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">
-                          ⏳ In Attesa Conferma SMS
-                        </span>
-                      )}
-                      {item.stato_slot === "occupato" && (
-                        <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">
-                          ✓ Occupato / Recuperato
-                        </span>
-                      )}
+                      {item.stato_slot === "libero" && <span className="px-3 py-1 rounded-full text-xs font-semibold bg-red-100 text-red-700">Libero (Da Assegnare)</span>}
+                      {item.stato_slot === "in_attesa_conferma" && <span className="px-3 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800">⏳ In Attesa Conferma SMS</span>}
+                      {item.stato_slot === "occupato" && <span className="px-3 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-700">✓ Occupato / Recuperato</span>}
                     </td>
                   </tr>
                 ))
               )}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Coda Pazienti per facilitare il test sul Simulatore */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="p-5 border-b border-slate-200">
-            <h3 className="font-bold text-slate-800">
-              Coda Ricette Pazienti (Numeri da usare nel Simulatore `/paziente`)
-            </h3>
-          </div>
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 text-slate-500 text-xs uppercase border-b border-slate-200">
-                <th className="p-4">Paziente</th>
-                <th className="p-4">Telefono (Copia per Test)</th>
-                <th className="p-4">Prestazione Richiesta</th>
-                <th className="p-4">Priorità</th>
-                <th className="p-4">Stato Ricetta</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 text-sm">
-              {coda.map((r) => (
-                <tr key={r.id} className="hover:bg-slate-50">
-                  <td className="p-4 font-medium">{r.nome}</td>
-                  <td className="p-4 font-mono text-blue-600 font-semibold">{r.telefono}</td>
-                  <td className="p-4">{r.prestazione}</td>
-                  <td className="p-4">Classe {r.priorita_clinica}</td>
-                  <td className="p-4">
-                    <span
-                      className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                        r.stato === "evasa"
-                          ? "bg-emerald-100 text-emerald-700"
-                          : "bg-slate-100 text-slate-700"
-                      }`}
-                    >
-                      {r.stato}
-                    </span>
-                  </td>
-                </tr>
-              ))}
             </tbody>
           </table>
         </div>
