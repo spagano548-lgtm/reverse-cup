@@ -46,7 +46,6 @@ async function popolaDatiDemo() {
     await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '36 hours', 'Ecografia Addome', 'Ospedale San Marco', 'occupato')`;
 }
 
-// Restituisce i dati in tempo reale alla Dashboard e popola il DB se vuoto
 export async function GET(req: Request) {
     try {
         const { searchParams } = new URL(req.url);
@@ -66,7 +65,7 @@ export async function GET(req: Request) {
         }
 
         const coda = await sql`
-            SELECT r.id, r.prestazione, r.priorita_clinica, r.stato, p.nome, p.telefono
+            SELECT r.id, r.prestazione, r.priorita_clinica, r.stato, r.data_inserimento, p.nome, p.telefono
             FROM ricette r
             JOIN pazienti p ON r.id_paziente = p.id
             ORDER BY r.priorita_clinica ASC, r.data_inserimento ASC
@@ -79,24 +78,58 @@ export async function GET(req: Request) {
     }
 }
 
-// Gestisce la risposta SI/NO dal Simulatore Paziente
 export async function POST(req: Request) {
     try {
-        const { telefono, risposta } = await req.json();
+        const body = await req.json();
 
+        // Caso 1: Nuova registrazione paziente in lista d'attesa (Presa in Carico ex L. 107/2024)
+        if (body.azione === 'registra') {
+            const { nome, telefono, prestazione, priorita_clinica } = body;
+            if (!nome || !telefono || !prestazione || !priorita_clinica) {
+                return NextResponse.json({ message: "Campi obbligatori mancanti" }, { status: 400 });
+            }
+
+            const nuovoPaz = await sql`
+                INSERT INTO pazienti (nome, telefono)
+                VALUES (${nome.trim()}, ${telefono.trim()})
+                RETURNING id
+            `;
+            const nuovaRic = await sql`
+                INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato)
+                VALUES (${nuovoPaz[0].id}, ${prestazione}, ${Number(priorita_clinica)}, 'in_attesa')
+                RETURNING id, data_inserimento
+            `;
+
+            return NextResponse.json({
+                success: true,
+                message: "Cittadino registrato ufficialmente in lista d'attesa.",
+                record: {
+                    id: nuovaRic[0].id,
+                    nome: nome.trim(),
+                    telefono: telefono.trim(),
+                    prestazione,
+                    priorita_clinica: Number(priorita_clinica),
+                    stato: 'in_attesa',
+                    data_inserimento: nuovaRic[0].data_inserimento
+                }
+            });
+        }
+
+        // Caso 2: Risposta SI/NO del paziente dal Simulatore
+        const { telefono, risposta } = body;
         if (!telefono || !risposta) {
             return NextResponse.json({ message: "Dati mancanti" }, { status: 400 });
         }
 
         const telPulito = telefono.trim();
-        const pazienteQuery = await sql`SELECT id FROM pazienti WHERE telefono = ${telPulito} LIMIT 1`;
+        const pazienteQuery = await sql`SELECT id, nome FROM pazienti WHERE telefono = ${telPulito} LIMIT 1`;
         if (pazienteQuery.length === 0) {
-            return NextResponse.json({ message: "Paziente non trovato. Usa es. 3331234567 o 3339876543." });
+            return NextResponse.json({ message: "Numero non trovato in lista. Usa es. 3331234567 o 3339876543." });
         }
         const idPaziente = pazienteQuery[0].id;
 
         const matchQuery = await sql`
-            SELECT a.id as id_slot, r.id as id_ricetta
+            SELECT a.id as id_slot, r.id as id_ricetta, a.prestazione, a.ospedale, a.data_ora
             FROM agende a
             JOIN ricette r ON a.prestazione = r.prestazione
             WHERE r.id_paziente = ${idPaziente} 
@@ -106,18 +139,21 @@ export async function POST(req: Request) {
         `;
 
         if (matchQuery.length === 0) {
-            return NextResponse.json({ message: "Nessuno slot in attesa di conferma per questo numero. Avvia prima il Match!" });
+            return NextResponse.json({ message: "Nessuno slot in attesa di conferma per questo numero. Avvia prima il Match sulla Dashboard!" });
         }
         const match = matchQuery[0];
 
         if (risposta === 'SI') {
             await sql`UPDATE agende SET stato_slot = 'occupato' WHERE id = ${match.id_slot}`;
             await sql`UPDATE ricette SET stato = 'evasa' WHERE id = ${match.id_ricetta}`;
-            return NextResponse.json({ message: "✅ Appuntamento confermato! Slot assegnato con successo." });
+            return NextResponse.json({
+                message: "✅ Appuntamento CONFERMATO! Ricorda: ai sensi dell'Art. 3 c. 7 D.L. 73/2024 (L. 107/2024), eventuale disdetta va comunicata almeno 48h prima per evitare l'addebito del ticket (anche se esente)."
+            });
         } else {
             await sql`UPDATE agende SET stato_slot = 'libero' WHERE id = ${match.id_slot}`;
-            await sql`UPDATE ricette SET priorita_clinica = 4 WHERE id = ${match.id_ricetta}`;
-            return NextResponse.json({ message: "❌ Turno ceduto. Lo slot è tornato disponibile per il prossimo paziente." });
+            return NextResponse.json({
+                message: "🔄 Hai ceduto lo slot last-minute al paziente successivo. Conservi intatto il tuo diritto in lista d'attesa entro i tempi massimi della tua classe RAO (PNGLA)."
+            });
         }
     } catch (error) {
         console.error("Errore nel Webhook:", error);
