@@ -42,6 +42,7 @@ async function popolaDatiDemo() {
     await sql`INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato) VALUES (${p3[0].id}, 'Visita Cardiologica', 1, 'in_attesa')`;
 
     await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '12 hours', 'Risonanza Magnetica', 'Ospedale Centrale', 'libero')`;
+    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '18 hours', 'Risonanza Magnetica', 'Ospedale Centrale', 'libero')`;
     await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '24 hours', 'Visita Cardiologica', 'Poliambulatorio Nord', 'libero')`;
     await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '36 hours', 'Ecografia Addome', 'Ospedale San Marco', 'occupato')`;
 }
@@ -82,13 +83,9 @@ export async function POST(req: Request) {
     try {
         const body = await req.json();
 
-        // Caso 1: Nuova registrazione paziente in lista d'attesa (Presa in Carico ex L. 107/2024)
+        // Caso 1: Registrazione singolo paziente su DB reale
         if (body.azione === 'registra') {
             const { nome, telefono, prestazione, priorita_clinica } = body;
-            if (!nome || !telefono || !prestazione || !priorita_clinica) {
-                return NextResponse.json({ message: "Campi obbligatori mancanti" }, { status: 400 });
-            }
-
             const nuovoPaz = await sql`
                 INSERT INTO pazienti (nome, telefono)
                 VALUES (${nome.trim()}, ${telefono.trim()})
@@ -99,10 +96,8 @@ export async function POST(req: Request) {
                 VALUES (${nuovoPaz[0].id}, ${prestazione}, ${Number(priorita_clinica)}, 'in_attesa')
                 RETURNING id, data_inserimento
             `;
-
             return NextResponse.json({
                 success: true,
-                message: "Cittadino registrato ufficialmente in lista d'attesa.",
                 record: {
                     id: nuovaRic[0].id,
                     nome: nome.trim(),
@@ -115,21 +110,43 @@ export async function POST(req: Request) {
             });
         }
 
-        // Caso 2: Risposta SI/NO del paziente dal Simulatore
+        // Caso 2: Importazione Massiva Batch / CSV da gestionale CUP Regionale
+        if (body.azione === 'importa_batch' && Array.isArray(body.pazienti)) {
+            let importati = 0;
+            for (const item of body.pazienti) {
+                if (!item.nome || !item.telefono || !item.prestazione) continue;
+                const p = await sql`
+                    INSERT INTO pazienti (nome, telefono)
+                    VALUES (${String(item.nome).trim()}, ${String(item.telefono).trim()})
+                    RETURNING id
+                `;
+                await sql`
+                    INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato)
+                    VALUES (${p[0].id}, ${String(item.prestazione).trim()}, ${Number(item.priorita_clinica) || 2}, 'in_attesa')
+                `;
+                importati++;
+            }
+            return NextResponse.json({
+                success: true,
+                message: `Importati con successo ${importati} assistiti dal flusso CUP Regionale.`
+            });
+        }
+
+        // Caso 3: Risposta SI/NO dal Simulatore Paziente
         const { telefono, risposta } = body;
         if (!telefono || !risposta) {
             return NextResponse.json({ message: "Dati mancanti" }, { status: 400 });
         }
 
         const telPulito = telefono.trim();
-        const pazienteQuery = await sql`SELECT id, nome FROM pazienti WHERE telefono = ${telPulito} LIMIT 1`;
+        const pazienteQuery = await sql`SELECT id FROM pazienti WHERE telefono = ${telPulito} LIMIT 1`;
         if (pazienteQuery.length === 0) {
-            return NextResponse.json({ message: "Numero non trovato in lista. Usa es. 3331234567 o 3339876543." });
+            return NextResponse.json({ message: "Numero non trovato in lista. Usa il numero indicato nella Dashboard." });
         }
         const idPaziente = pazienteQuery[0].id;
 
         const matchQuery = await sql`
-            SELECT a.id as id_slot, r.id as id_ricetta, a.prestazione, a.ospedale, a.data_ora
+            SELECT a.id as id_slot, r.id as id_ricetta
             FROM agende a
             JOIN ricette r ON a.prestazione = r.prestazione
             WHERE r.id_paziente = ${idPaziente} 
@@ -147,12 +164,12 @@ export async function POST(req: Request) {
             await sql`UPDATE agende SET stato_slot = 'occupato' WHERE id = ${match.id_slot}`;
             await sql`UPDATE ricette SET stato = 'evasa' WHERE id = ${match.id_ricetta}`;
             return NextResponse.json({
-                message: "✅ Appuntamento CONFERMATO! Ricorda: ai sensi dell'Art. 3 c. 7 D.L. 73/2024 (L. 107/2024), eventuale disdetta va comunicata almeno 48h prima per evitare l'addebito del ticket (anche se esente)."
+                message: "✅ Appuntamento CONFERMATO! Ricorda: ai sensi dell'Art. 3 c. 7 D.L. 73/2024 (L. 107/2024), eventuale disdetta va comunicata almeno 48h prima."
             });
         } else {
             await sql`UPDATE agende SET stato_slot = 'libero' WHERE id = ${match.id_slot}`;
             return NextResponse.json({
-                message: "🔄 Hai ceduto lo slot last-minute al paziente successivo. Conservi intatto il tuo diritto in lista d'attesa entro i tempi massimi della tua classe RAO (PNGLA)."
+                message: "🔄 Hai ceduto lo slot last-minute. Conservi la tua posizione ordinaria entro i tempi della tua classe RAO (PNGLA)."
             });
         }
     } catch (error) {

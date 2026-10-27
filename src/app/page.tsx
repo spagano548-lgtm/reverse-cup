@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 
-// Mappatura ufficiale Classi RAO (AGENAS / PNGLA)
 const NORMATIVA_RAO: Record<
   number,
   { codice: string; nome: string; tempoMax: string; colore: string; descrizioneLegge: string }
@@ -48,12 +47,14 @@ export default function Dashboard() {
   const [statusMsg, setStatusMsg] = useState<string>("");
   const [matchAudit, setMatchAudit] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(true);
-
-  // Stato per il Paziente selezionato/registrato (Mostra il Prospetto Normativo)
   const [schedaPaziente, setSchedaPaziente] = useState<any>(null);
 
-  // Stato per il form di simulazione "Nuova Registrazione in Lista d'Attesa"
   const [mostraFormReg, setMostraFormReg] = useState<boolean>(false);
+  const [mostraImportCSV, setMostraImportCSV] = useState<boolean>(false);
+  const [csvTesto, setCsvTesto] = useState<string>(
+    "Elena Greco,3337788990,Risonanza Magnetica,1\nMarco Conti,3331122334,Visita Cardiologica,2\nSofia Marino,3336655443,Risonanza Magnetica,3"
+  );
+
   const [nuovoNome, setNuovoNome] = useState<string>("");
   const [nuovoTel, setNuovoTel] = useState<string>("");
   const [nuovaPrestazione, setNuovaPrestazione] = useState<string>("Risonanza Magnetica");
@@ -99,30 +100,66 @@ export default function Dashboard() {
     }
   };
 
-  // Funzione che simula l'inserimento di un nuovo cittadino in lista e apre subito l'informativa di legge
-  const registraNuovoPazienteDemo = (e: React.FormEvent) => {
+  const registraNuovoPazienteReale = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nuovoNome || !nuovoTel) return;
 
-    const nuovoRecord = {
-      id: Math.floor(1000 + Math.random() * 9000),
-      nome: nuovoNome,
-      telefono: nuovoTel,
-      prestazione: nuovaPrestazione,
-      priorita_clinica: nuovaPriorita,
-      stato: "in_attesa",
-      nre: `190A${Math.floor(10000000000 + Math.random() * 89999999999)}`,
-      data_presa_in_carico: new Date().toLocaleString("it-IT"),
-    };
+    try {
+      const res = await fetch("/api/webhook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          azione: "registra",
+          nome: nuovoNome,
+          telefono: nuovoTel,
+          prestazione: nuovaPrestazione,
+          priorita_clinica: nuovaPriorita,
+        }),
+      });
+      const data = await res.json();
+      if (data.record) {
+        await caricaDati();
+        setMostraFormReg(false);
+        setNuovoNome("");
+        setNuovoTel("");
+        setSchedaPaziente(data.record);
+        setStatusMsg(`Paziente ${data.record.nome} salvato su DB e preso in carico (ex L. 107/2024).`);
+      }
+    } catch {
+      setStatusMsg("Errore durante la registrazione del paziente.");
+    }
+  };
 
-    setCoda((prev) => [nuovoRecord, ...prev]);
-    setMostraFormReg(false);
-    setNuovoNome("");
-    setNuovoTel("");
-    setSchedaPaziente(nuovoRecord);
-    setStatusMsg(
-      `Paziente ${nuovoRecord.nome} registrato in Pre-Lista (ex L. 107/2024). Generato prospetto normativo di presa in carico.`
-    );
+  const importaFlussoCSV = async () => {
+    const righe = csvTesto
+      .split("\n")
+      .map((r) => r.trim())
+      .filter(Boolean);
+
+    const pazienti = righe.map((riga) => {
+      const [nome, telefono, prestazione, priorita] = riga.split(",");
+      return {
+        nome,
+        telefono,
+        prestazione,
+        priorita_clinica: Number(priorita) || 2,
+      };
+    });
+
+    setStatusMsg("Importazione flusso CUP Regionale in corso...");
+    try {
+      const res = await fetch("/api/webhook", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ azione: "importa_batch", pazienti }),
+      });
+      const data = await res.json();
+      setStatusMsg(data.message || "Flusso importato!");
+      setMostraImportCSV(false);
+      await caricaDati();
+    } catch {
+      setStatusMsg("Errore durante l'importazione CSV.");
+    }
   };
 
   useEffect(() => {
@@ -147,13 +184,19 @@ export default function Dashboard() {
           </div>
           <nav className="space-y-2">
             <div className="bg-blue-600 text-white px-4 py-2.5 rounded-lg text-sm font-medium shadow-md">
-              Dashboard Yield & Audit
+              Dashboard Yield &amp; Audit
             </div>
             <button
               onClick={() => setMostraFormReg(true)}
               className="w-full text-left text-slate-300 hover:bg-slate-800 hover:text-white px-4 py-2.5 rounded-lg text-sm font-medium transition cursor-pointer"
             >
               📝 Nuova Presa in Carico
+            </button>
+            <button
+              onClick={() => setMostraImportCSV(true)}
+              className="w-full text-left text-slate-300 hover:bg-slate-800 hover:text-white px-4 py-2.5 rounded-lg text-sm font-medium transition cursor-pointer"
+            >
+              📥 Importa CSV CUP Legacy
             </button>
             <Link
               href="/paziente"
@@ -167,7 +210,7 @@ export default function Dashboard() {
         <div className="text-xs text-slate-500 border-t border-slate-800 pt-4 space-y-1">
           <div className="text-slate-300 font-semibold">Conformità Normativa:</div>
           <div>• L. 107/2024 (D.L. 73/2024)</div>
-          <div>• PNGLA & Classi RAO AGENAS</div>
+          <div>• PNGLA &amp; Classi RAO AGENAS</div>
           <div>• Art. 3 D.Lgs. 124/1998</div>
           <div>• GDPR Reg. UE 2016/679</div>
         </div>
@@ -186,6 +229,12 @@ export default function Dashboard() {
           </div>
 
           <div className="flex flex-wrap gap-3">
+            <button
+              onClick={() => setMostraImportCSV(!mostraImportCSV)}
+              className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition cursor-pointer"
+            >
+              📥 Importa Flusso CSV
+            </button>
             <button
               onClick={() => setMostraFormReg(!mostraFormReg)}
               className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2.5 rounded-lg text-sm font-semibold shadow-sm transition cursor-pointer"
@@ -207,7 +256,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Notifica di sistema */}
         {statusMsg && (
           <div className="mb-6 p-4 bg-blue-50 border border-blue-200 text-blue-900 rounded-xl text-sm font-medium flex justify-between items-center shadow-sm">
             <span>{statusMsg}</span>
@@ -220,7 +268,43 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* FORM REGISTRAZIONE UTENTE IN LISTA D'ATTESA */}
+        {/* MODULO IMPORTAZIONE MASSIVA CSV (PER OPERATIVITÀ DAL GIORNO 1) */}
+        {mostraImportCSV && (
+          <div className="mb-8 bg-white p-6 rounded-xl shadow-md border-2 border-slate-800">
+            <div className="flex justify-between items-center mb-3">
+              <div>
+                <h3 className="text-lg font-bold text-slate-800">
+                  Importazione Asincrona Flusso CUP Regionale (CSV / HL7 Legacy)
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Incolla o modifica il tracciato CSV esportato dal gestionale ospedaliero (Formato: Nome,Telefono,Prestazione,ClasseRAO).
+                </p>
+              </div>
+              <button
+                onClick={() => setMostraImportCSV(false)}
+                className="text-slate-400 hover:text-slate-600 text-sm font-bold"
+              >
+                ✕ Chiudi
+              </button>
+            </div>
+            <textarea
+              rows={4}
+              value={csvTesto}
+              onChange={(e) => setCsvTesto(e.target.value)}
+              className="w-full p-3 border border-slate-300 rounded-lg font-mono text-xs mb-3 bg-slate-50"
+            />
+            <div className="flex justify-end">
+              <button
+                onClick={importaFlussoCSV}
+                className="bg-slate-900 hover:bg-blue-700 text-white px-5 py-2.5 rounded-lg text-xs font-semibold transition cursor-pointer"
+              >
+                Carica Lotto nel Database Neon PostgreSQL →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* FORM REGISTRAZIONE SINGOLO UTENTE */}
         {mostraFormReg && (
           <div className="mb-8 bg-white p-6 rounded-xl shadow-md border-2 border-emerald-500">
             <div className="flex justify-between items-center mb-4">
@@ -229,7 +313,7 @@ export default function Dashboard() {
                   Inserimento Cittadino in Lista d&apos;Attesa (Presa in Carico ex L. 107/2024)
                 </h3>
                 <p className="text-xs text-slate-500">
-                  La registrazione genera automaticamente l&apos;Attestazione Normativa con i tempi massimi garantiti (PNGLA) e le tutele di legge.
+                  Salva sul database PostgreSQL e genera immediatamente il Prospetto Normativo per il cittadino.
                 </p>
               </div>
               <button
@@ -240,7 +324,7 @@ export default function Dashboard() {
               </button>
             </div>
 
-            <form onSubmit={registraNuovoPazienteDemo} className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <form onSubmit={registraNuovoPazienteReale} className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-600 uppercase mb-1">
                   Nome e Cognome Assistito
@@ -308,7 +392,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* PROSPETTO INFORMATIVO E NORMATIVO DI PRESA IN CARICO (Visualizzato alla registrazione o al click) */}
+        {/* PROSPETTO INFORMATIVO E NORMATIVO DI PRESA IN CARICO */}
         {schedaPaziente && (
           <div className="mb-8 bg-white rounded-2xl shadow-xl border-2 border-blue-600 overflow-hidden">
             <div className="bg-slate-900 text-white p-5 flex flex-wrap justify-between items-center gap-4">
@@ -329,7 +413,6 @@ export default function Dashboard() {
             </div>
 
             <div className="p-6 space-y-6 text-sm text-slate-700">
-              {/* Riepilogo Dati Ricetta e SLA Legale */}
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-slate-50 p-4 rounded-xl border border-slate-200">
                 <div>
                   <span className="text-xs text-slate-400 uppercase font-semibold block">
@@ -373,96 +456,66 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              {/* Spiegazione Specifica secondo tutte le Normative Vigenti */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 1. Inquadramento Clinico e Divieto Chiusura Agende */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white">
-                  <h4 className="font-bold text-slate-900 mb-2 flex items-center gap-2">
-                    <span>1️⃣</span> Presa in Carico e Divieto di Chiusura Agende
+                  <h4 className="font-bold text-slate-900 mb-2">
+                    1️⃣ Presa in Carico e Divieto di Chiusura Agende
                   </h4>
-                  <p className="text-xs leading-relaxed text-slate-600 mb-2">
+                  <p className="text-xs leading-relaxed text-slate-600">
                     Ai sensi dell&apos;<strong>Art. 3, c. 12 del D.Lgs. 124/1998</strong> e della{" "}
-                    <strong>Legge 107/2024 (conversione D.L. 73/2024 &quot;Decreto Liste d&apos;Attesa&quot;)</strong>,
-                    è fatto divieto assoluto alle ASL di sospendere o chiudere le agende di prenotazione.
-                  </p>
-                  <p className="text-xs leading-relaxed text-slate-600">
-                    <strong>Cosa significa per l&apos;utente:</strong> La tua richiesta è stata inserita nel registro
-                    ufficiale con priorità{" "}
-                    <strong>
-                      Classe {NORMATIVA_RAO[schedaPaziente.priorita_clinica]?.codice} (
-                      {NORMATIVA_RAO[schedaPaziente.priorita_clinica]?.tempoMax})
-                    </strong>
-                    . {NORMATIVA_RAO[schedaPaziente.priorita_clinica]?.descrizioneLegge}
+                    <strong>Legge 107/2024 (D.L. 73/2024)</strong>, è vietata qualsiasi chiusura delle agende.{" "}
+                    {NORMATIVA_RAO[schedaPaziente.priorita_clinica]?.descrizioneLegge}
                   </p>
                 </div>
 
-                {/* 2. Meccanismo di Chiamata Anticipata Reverse-CUP */}
                 <div className="p-4 rounded-xl border border-slate-200 bg-white">
-                  <h4 className="font-bold text-slate-900 mb-2 flex items-center gap-2">
-                    <span>2️⃣</span> Funzionamento del Recall Dinamico (Reverse-CUP)
+                  <h4 className="font-bold text-slate-900 mb-2">
+                    2️⃣ Funzionamento del Recall Dinamico (Reverse-CUP)
                   </h4>
-                  <p className="text-xs leading-relaxed text-slate-600 mb-2">
-                    In attuazione delle direttive sul recupero degli slot disdetti (<strong>D.L. 73/2024, Art. 3</strong>),
-                    il sistema monitora h24 i posti che si liberano nelle 48 ore successive per rinuncia di altri assistiti.
-                  </p>
                   <p className="text-xs leading-relaxed text-slate-600">
-                    <strong>Cosa succede quando ricevi l&apos;SMS:</strong> Rispondendo <strong>SI</strong> confermi
-                    immediatamente l&apos;appuntamento anticipato. Rispondendo <strong>NO</strong> cedi lo slot
-                    last-minute al paziente successivo in graduatoria, <strong>senza perdere il diritto</strong>{" "}
-                    all&apos;erogazione entro i termini ordinari della tua classe di priorità.
+                    In attuazione del <strong>D.L. 73/2024, Art. 3</strong>, rispondendo <strong>SI</strong> confermi
+                    lo slot last-minute; rispondendo <strong>NO</strong> cedi il turno senza perdere il diritto
+                    all&apos;erogazione entro i termini ordinari della tua classe RAO.
                   </p>
                 </div>
 
-                {/* 3. Percorso di Tutela (Intramoenia / Privato Accreditato) */}
                 <div className="p-4 rounded-xl border border-amber-200 bg-amber-50/50">
-                  <h4 className="font-bold text-amber-900 mb-2 flex items-center gap-2">
-                    <span>3️⃣</span> Diritto al &quot;Percorso di Tutela&quot; (Art. 3, c. 13, D.Lgs. 124/1998)
+                  <h4 className="font-bold text-amber-900 mb-2">
+                    3️⃣ Diritto al &quot;Percorso di Tutela&quot; (Art. 3, c. 13, D.Lgs. 124/1998)
                   </h4>
                   <p className="text-xs leading-relaxed text-amber-900/90">
-                    Qualora l&apos;Azienda Sanitaria non sia in grado di assicurare la prestazione entro il tempo
-                    massimo stabilito per la tua classe (<strong>{NORMATIVA_RAO[schedaPaziente.priorita_clinica]?.tempoMax}</strong>),
-                    hai il diritto di chiedere che la prestazione venga resa in regime di{" "}
-                    <strong>attività libero-professionale intramuraria (ALPI / Intramoenia)</strong> o presso strutture
-                    private accreditate, <strong>senza oneri aggiuntivi</strong> a tuo carico (pagando esclusivamente la
-                    quota di partecipazione al costo / ticket eventualmente dovuta).
+                    In caso di superamento dei tempi massimi (<strong>{NORMATIVA_RAO[schedaPaziente.priorita_clinica]?.tempoMax}</strong>),
+                    hai diritto all&apos;erogazione in regime <strong>Intramoenia (ALPI)</strong> o privato accreditato
+                    pagando esclusivamente l&apos;eventuale quota ticket.
                   </p>
                 </div>
 
-                {/* 4. Obbligo di Disdetta entro 48h e Sanzioni No-Show */}
                 <div className="p-4 rounded-xl border border-red-200 bg-red-50/50">
-                  <h4 className="font-bold text-red-900 mb-2 flex items-center gap-2">
-                    <span>4️⃣</span> Obbligo di Disdetta (48h) e Sanzione Mancata Presentazione
+                  <h4 className="font-bold text-red-900 mb-2">
+                    4️⃣ Obbligo di Disdetta entro 48h e Sanzione No-Show
                   </h4>
                   <p className="text-xs leading-relaxed text-red-900/90">
-                    Ai sensi dell&apos;<strong>Art. 3, c. 7 del D.L. 73/2024 (L. 107/2024)</strong> e del{" "}
-                    <strong>D.Lgs. 124/1998</strong>, una volta confermato l&apos;appuntamento, l&apos;assistito che non
-                    si presenti nel giorno e nell&apos;ora fissati senza aver comunicato la disdetta almeno{" "}
-                    <strong>2 giorni lavorativi (48 ore) prima</strong> è tenuto al pagamento della quota ordinaria di
-                    partecipazione al costo (ticket) della prestazione prenotata,{" "}
-                    <strong>anche se titolare di esenzione</strong> per reddito o patologia (salvo documentati motivi di
-                    forza maggiore).
+                    Ai sensi dell&apos;<strong>Art. 3, c. 7 del D.L. 73/2024 (L. 107/2024)</strong>, la mancata
+                    presentazione senza disdetta comunicata almeno <strong>2 giorni lavorativi (48 ore) prima</strong>{" "}
+                    comporta l&apos;addebito del ticket <strong>anche per i titolari di esenzione</strong>.
                   </p>
                 </div>
               </div>
 
-              {/* 5. Trasparenza Algoritmica GDPR e Anticorruzione */}
               <div className="p-4 rounded-xl bg-slate-900 text-slate-300 text-xs leading-relaxed">
                 <div className="font-bold text-white mb-1 flex justify-between items-center">
                   <span>🔒 Garanzia di Trasparenza Algoritmica (Art. 22 GDPR) e Anticorruzione (L. 190/2012)</span>
                   <span className="font-mono text-emerald-400">Protocollo SHA-256 Verificato</span>
                 </div>
-                Ai sensi degli <strong>Artt. 9, 13, 14 e 22 del Regolamento UE 2016/679 (GDPR)</strong> e del{" "}
-                <strong>D.Lgs. 196/2003 (novellato dal D.Lgs. 101/2018)</strong>, l&apos;ordine di chiamata è
-                determinato dal motore <strong>DYCUS (Dynamic Yield &amp; Clinical Urgency Score)</strong> sulla base di
-                parametri oggettivi: classe RAO prescritta dal medico, anzianità di attesa in lista (*aging*) e urgenza
-                temporale dello slot. Ogni scorrimento genera un hash crittografico immutabile che impedisce qualsiasi
-                scavalcamento manuale o alterazione illecita della graduatoria.
+                Ai sensi degli <strong>Artt. 9, 13, 14 e 22 del Regolamento UE 2016/679 (GDPR)</strong>, l&apos;ordine
+                di chiamata è governato dal motore <strong>DYCUS</strong> e blindato con firma crittografica immutabile
+                SHA-256 contro qualsiasi alterazione manuale.
               </div>
             </div>
           </div>
         )}
 
-        {/* AUDIT CRITTOGRAFICO (Mostrato quando c'è un match) */}
+        {/* AUDIT CRITTOGRAFICO */}
         {matchAudit && (
           <div className="mb-8 bg-slate-900 rounded-xl shadow-lg border border-slate-700 overflow-hidden font-mono text-sm">
             <div className="bg-slate-950 px-4 py-3 border-b border-slate-800 flex items-center justify-between">
@@ -579,7 +632,7 @@ export default function Dashboard() {
           </table>
         </div>
 
-        {/* Coda Ricette Pazienti con SLA Normativo e pulsante Attestazione */}
+        {/* Coda Ricette Pazienti */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
           <div className="p-5 border-b border-slate-200 flex flex-wrap justify-between items-center gap-2">
             <div>
@@ -587,7 +640,7 @@ export default function Dashboard() {
                 Registro Coda d&apos;Attesa e Tutele Normative (PNGLA / L. 107/2024)
               </h3>
               <p className="text-xs text-slate-500">
-                Clicca su &quot;📜 Vedi Scheda Normativa&quot; su qualsiasi paziente per aprire l&apos;informativa legale completa di presa in carico.
+                Clicca su &quot;📜 Vedi Scheda Normativa&quot; per aprire l&apos;informativa legale completa dell&apos;assistito.
               </p>
             </div>
           </div>
