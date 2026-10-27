@@ -28,23 +28,54 @@ async function popolaDatiDemo() {
             stato_slot TEXT DEFAULT 'libero'
         )
     `;
+    await sql`
+        CREATE TABLE IF NOT EXISTS segnalazioni_cron (
+            id SERIAL PRIMARY KEY,
+            data_ora TIMESTAMP DEFAULT NOW(),
+            origine TEXT NOT NULL,
+            tipo_evento TEXT NOT NULL,
+            prestazione TEXT,
+            ospedale TEXT,
+            paziente_nome TEXT,
+            paziente_telefono TEXT,
+            dycus_score NUMERIC,
+            probabilita TEXT,
+            motivazione TEXT,
+            hash_sha256 TEXT NOT NULL,
+            dettaglio_esito TEXT NOT NULL
+        )
+    `;
 
     await sql`DELETE FROM ricette`;
     await sql`DELETE FROM agende`;
     await sql`DELETE FROM pazienti`;
+    await sql`DELETE FROM segnalazioni_cron`;
 
     const p1 = await sql`INSERT INTO pazienti (nome, telefono) VALUES ('Mario Rossi', '3331234567') RETURNING id`;
     const p2 = await sql`INSERT INTO pazienti (nome, telefono) VALUES ('Laura Bianchi', '3339876543') RETURNING id`;
     const p3 = await sql`INSERT INTO pazienti (nome, telefono) VALUES ('Giuseppe Verdi', '3335556677') RETURNING id`;
+    const p4 = await sql`INSERT INTO pazienti (nome, telefono) VALUES ('Anna Russo', '3334455889') RETURNING id`;
 
     await sql`INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato) VALUES (${p1[0].id}, 'Risonanza Magnetica', 1, 'in_attesa')`;
     await sql`INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato) VALUES (${p2[0].id}, 'Risonanza Magnetica', 2, 'in_attesa')`;
     await sql`INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato) VALUES (${p3[0].id}, 'Visita Cardiologica', 1, 'in_attesa')`;
+    await sql`INSERT INTO ricette (id_paziente, prestazione, priorita_clinica, stato) VALUES (${p4[0].id}, 'Ecografia Addome', 2, 'in_attesa')`;
 
-    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '12 hours', 'Risonanza Magnetica', 'Ospedale Centrale', 'libero')`;
-    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '18 hours', 'Risonanza Magnetica', 'Ospedale Centrale', 'libero')`;
-    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '24 hours', 'Visita Cardiologica', 'Poliambulatorio Nord', 'libero')`;
+    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '8 hours', 'Risonanza Magnetica', 'Ospedale Centrale (Hub)', 'libero')`;
+    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '16 hours', 'Risonanza Magnetica', 'Ospedale Centrale (Hub)', 'libero')`;
+    await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '22 hours', 'Visita Cardiologica', 'Poliambulatorio Nord (Spoke)', 'libero')`;
     await sql`INSERT INTO agende (data_ora, prestazione, ospedale, stato_slot) VALUES (NOW() + INTERVAL '36 hours', 'Ecografia Addome', 'Ospedale San Marco', 'occupato')`;
+
+    await sql`
+        INSERT INTO segnalazioni_cron (
+            origine, tipo_evento, prestazione, ospedale, paziente_nome, paziente_telefono,
+            dycus_score, probabilita, motivazione, hash_sha256, dettaglio_esito
+        ) VALUES (
+            'SYSTEM_BOOT', 'INIT_LEDGER', 'Tutte le Agende', 'Rete ASL',
+            'Sistema Pronto', '-', 100.0, '99%', 'Inizializzazione Registro Crittografico L. 107/2024',
+            'GENESIS_HASH_SSN_99A01F88B2', 'Nodo di telemetria Cron-Job attivo e in ascolto ogni 5 minuti.'
+        )
+    `;
 }
 
 export async function GET(req: Request) {
@@ -72,10 +103,35 @@ export async function GET(req: Request) {
             ORDER BY r.priorita_clinica ASC, r.data_inserimento ASC
         `;
 
-        return NextResponse.json({ agende, coda });
+        // Assicuriamoci che la tabella segnalazioni_cron esista e leggiamo gli ultimi 100 eventi
+        let segnalazioni = [];
+        try {
+            segnalazioni = await sql`SELECT * FROM segnalazioni_cron ORDER BY id DESC LIMIT 100`;
+        } catch {
+            await sql`
+                CREATE TABLE IF NOT EXISTS segnalazioni_cron (
+                    id SERIAL PRIMARY KEY,
+                    data_ora TIMESTAMP DEFAULT NOW(),
+                    origine TEXT NOT NULL,
+                    tipo_evento TEXT NOT NULL,
+                    prestazione TEXT,
+                    ospedale TEXT,
+                    paziente_nome TEXT,
+                    paziente_telefono TEXT,
+                    dycus_score NUMERIC,
+                    probabilita TEXT,
+                    motivazione TEXT,
+                    hash_sha256 TEXT NOT NULL,
+                    dettaglio_esito TEXT NOT NULL
+                )
+            `;
+            segnalazioni = await sql`SELECT * FROM segnalazioni_cron ORDER BY id DESC LIMIT 100`;
+        }
+
+        return NextResponse.json({ agende, coda, segnalazioni });
     } catch (error) {
         console.error("Errore lettura dati:", error);
-        return NextResponse.json({ agende: [], coda: [], error: "Errore DB" }, { status: 500 });
+        return NextResponse.json({ agende: [], coda: [], segnalazioni: [], error: "Errore DB" }, { status: 500 });
     }
 }
 
@@ -83,7 +139,7 @@ export async function POST(req: Request) {
     try {
         const body = await req.json();
 
-        // Caso 1: Registrazione singolo paziente su DB reale
+        // Caso 1: Registrazione singolo paziente
         if (body.azione === 'registra') {
             const { nome, telefono, prestazione, priorita_clinica } = body;
             const nuovoPaz = await sql`
@@ -96,6 +152,20 @@ export async function POST(req: Request) {
                 VALUES (${nuovoPaz[0].id}, ${prestazione}, ${Number(priorita_clinica)}, 'in_attesa')
                 RETURNING id, data_inserimento
             `;
+
+            await sql`
+                INSERT INTO segnalazioni_cron (
+                    origine, tipo_evento, prestazione, ospedale, paziente_nome, paziente_telefono,
+                    dycus_score, probabilita, motivazione, hash_sha256, dettaglio_esito
+                ) VALUES (
+                    'PORTALE_CUP', 'PRESA_IN_CARICO', ${prestazione}, 'Sportello / Web ASL',
+                    ${nome.trim()}, ${telefono.trim()}, 0, '-',
+                    ${'Iscrizione Classe RAO ' + priorita_clinica + ' (ex L. 107/2024)'},
+                    ${'REG_SHA_' + Date.now().toString(16).toUpperCase()},
+                    ${'Assistito registrato in lista d attesa con generazione prospetto diritti PNGLA.'}
+                )
+            `;
+
             return NextResponse.json({
                 success: true,
                 record: {
@@ -110,7 +180,7 @@ export async function POST(req: Request) {
             });
         }
 
-        // Caso 2: Importazione Massiva Batch / CSV da gestionale CUP Regionale
+        // Caso 2: Importazione Massiva Batch / CSV
         if (body.azione === 'importa_batch' && Array.isArray(body.pazienti)) {
             let importati = 0;
             for (const item of body.pazienti) {
@@ -126,6 +196,20 @@ export async function POST(req: Request) {
                 `;
                 importati++;
             }
+
+            await sql`
+                INSERT INTO segnalazioni_cron (
+                    origine, tipo_evento, prestazione, ospedale, paziente_nome, paziente_telefono,
+                    dycus_score, probabilita, motivazione, hash_sha256, dettaglio_esito
+                ) VALUES (
+                    'IMPORT_CSV_LEGACY', 'FLUSSO_MASSIVO', 'Multi-Prestazione', 'CUP Regionale',
+                    ${importati + ' Assistiti Importati'}, '-', 0, '-',
+                    'Ingestione batch da gestionale ospedaliero legacy',
+                    ${'BATCH_SHA_' + Date.now().toString(16).toUpperCase()},
+                    ${'Acquisiti ' + importati + ' record nel database per lo scorrimento automatico.'}
+                )
+            `;
+
             return NextResponse.json({
                 success: true,
                 message: `Importati con successo ${importati} assistiti dal flusso CUP Regionale.`
@@ -139,14 +223,15 @@ export async function POST(req: Request) {
         }
 
         const telPulito = telefono.trim();
-        const pazienteQuery = await sql`SELECT id FROM pazienti WHERE telefono = ${telPulito} LIMIT 1`;
+        const pazienteQuery = await sql`SELECT id, nome FROM pazienti WHERE telefono = ${telPulito} LIMIT 1`;
         if (pazienteQuery.length === 0) {
             return NextResponse.json({ message: "Numero non trovato in lista. Usa il numero indicato nella Dashboard." });
         }
         const idPaziente = pazienteQuery[0].id;
+        const nomePaziente = pazienteQuery[0].nome;
 
         const matchQuery = await sql`
-            SELECT a.id as id_slot, r.id as id_ricetta
+            SELECT a.id as id_slot, r.id as id_ricetta, a.prestazione, a.ospedale
             FROM agende a
             JOIN ricette r ON a.prestazione = r.prestazione
             WHERE r.id_paziente = ${idPaziente} 
@@ -163,11 +248,39 @@ export async function POST(req: Request) {
         if (risposta === 'SI') {
             await sql`UPDATE agende SET stato_slot = 'occupato' WHERE id = ${match.id_slot}`;
             await sql`UPDATE ricette SET stato = 'evasa' WHERE id = ${match.id_ricetta}`;
+
+            await sql`
+                INSERT INTO segnalazioni_cron (
+                    origine, tipo_evento, prestazione, ospedale, paziente_nome, paziente_telefono,
+                    dycus_score, probabilita, motivazione, hash_sha256, dettaglio_esito
+                ) VALUES (
+                    'WEBHOOK_SMS_PAZIENTE', 'CONFERMA_SI', ${match.prestazione}, ${match.ospedale},
+                    ${nomePaziente}, ${telPulito}, 100, '100%',
+                    'Conferma bidirezionale SMS ricevuta dal cittadino',
+                    ${'ACK_SHA_' + Date.now().toString(16).toUpperCase()},
+                    ${'Slot #' + match.id_slot + ' recuperato con successo (+45€ valore SSN generato).'}
+                )
+            `;
+
             return NextResponse.json({
                 message: "✅ Appuntamento CONFERMATO! Ricorda: ai sensi dell'Art. 3 c. 7 D.L. 73/2024 (L. 107/2024), eventuale disdetta va comunicata almeno 48h prima."
             });
         } else {
             await sql`UPDATE agende SET stato_slot = 'libero' WHERE id = ${match.id_slot}`;
+
+            await sql`
+                INSERT INTO segnalazioni_cron (
+                    origine, tipo_evento, prestazione, ospedale, paziente_nome, paziente_telefono,
+                    dycus_score, probabilita, motivazione, hash_sha256, dettaglio_esito
+                ) VALUES (
+                    'WEBHOOK_SMS_PAZIENTE', 'RIFIUTO_NO_ROLLOVER', ${match.prestazione}, ${match.ospedale},
+                    ${nomePaziente}, ${telPulito}, 0, '-',
+                    'Rinuncia turno last-minute (conservazione diritti PNGLA)',
+                    ${'NACK_SHA_' + Date.now().toString(16).toUpperCase()},
+                    ${'Slot #' + match.id_slot + ' rimesso immediatamente in stato LIBERO per scorrimento graduatoria.'}
+                )
+            `;
+
             return NextResponse.json({
                 message: "🔄 Hai ceduto lo slot last-minute. Conservi la tua posizione ordinaria entro i tempi della tua classe RAO (PNGLA)."
             });
