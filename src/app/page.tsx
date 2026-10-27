@@ -348,6 +348,19 @@ export default function Dashboard() {
             >
               Chiudi
             </button>
+
+            <button
+  onClick={async () => {
+    setStatusMsg("Esecuzione simulazione accettazioni di massa in corso...");
+    const res = await fetch("/api/simula");
+    const data = await res.json();
+    setStatusMsg(data.message || "Simulazione completata!");
+    await caricaDati();
+  }}
+  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg text-xs font-bold shadow-sm transition cursor-pointer"
+>
+  ⚡ Simula Accettazioni di Massa
+</button>
           </div>
         )}
 
